@@ -23,6 +23,7 @@ def parse_args():
         "--conflict-strategy",
         choices=["fail", "skip"],
         default="fail",
+        help="Deprecated. Import now always rewrites memo IDs in the target instance.",
     )
     parser.add_argument(
         "--state-file",
@@ -221,15 +222,38 @@ def target_memo_name(state, memo_id):
     return state["created_memos"].get(memo_id) or state["skipped_memos"].get(memo_id) or ""
 
 
-def target_has_memo(api, state, memo_id, existence_cache):
+def target_memo_id(state, memo_id):
+    name = target_memo_name(state, memo_id)
+    if not name:
+        return ""
+    return memo_id_from_name(name)
+
+
+def target_has_memo(state, memo_id):
     if not memo_id:
         return False
-    if target_memo_name(state, memo_id):
-        return True
-    if memo_id not in existence_cache:
-        existing = api.get_memo(memo_id)
-        existence_cache[memo_id] = existing.get("name", "") if existing else ""
-    return bool(existence_cache[memo_id])
+    return bool(target_memo_name(state, memo_id))
+
+
+def rewrite_relations(relations, state):
+    normalized = []
+    for relation in normalize_relations(relations):
+        source_memo_name = relation["memo"]["name"]
+        source_related_name = relation["relatedMemo"]["name"]
+        source_memo_id = memo_id_from_name(source_memo_name)
+        source_related_id = memo_id_from_name(source_related_name)
+        target_memo = target_memo_name(state, source_memo_id)
+        target_related = target_memo_name(state, source_related_id)
+        if not target_memo or not target_related:
+            continue
+        normalized.append(
+            {
+                "memo": {"name": target_memo},
+                "relatedMemo": {"name": target_related},
+                "type": relation["type"],
+            }
+        )
+    return normalized
 
 
 def build_existing_attachment_index(api, memo_id):
@@ -268,50 +292,38 @@ def main():
             memo_path = Path(temp_dir) / item["memo_json_path"]
             memo_payloads.append((item, load_json(memo_path)))
 
-        existence_cache = {}
         pending = list(memo_payloads)
         while pending:
             progressed = False
             next_pending = []
             for item, memo in pending:
-                memo_id = item["memo_id"]
-                if memo_id in state["created_memos"] or memo_id in state["skipped_memos"]:
+                source_memo_id = item["memo_id"]
+                if source_memo_id in state["created_memos"] or source_memo_id in state["skipped_memos"]:
                     progressed = True
                     continue
 
                 parent_name = memo.get("parent") or ""
-                parent_id = memo_id_from_name(parent_name)
-                if parent_id and not target_has_memo(api, state, parent_id, existence_cache):
+                source_parent_id = memo_id_from_name(parent_name)
+                if source_parent_id and not target_has_memo(state, source_parent_id):
                     next_pending.append((item, memo))
                     continue
 
-                existing = api.get_memo(memo_id)
-                if existing is not None:
-                    if args.conflict_strategy == "fail":
-                        raise SystemExit(f"Memo already exists in target instance: {memo_id}")
-                    state["skipped_memos"][memo_id] = existing.get("name", f"memos/{memo_id}")
-                    touch_state(state, state_file)
-                    existence_cache[memo_id] = state["skipped_memos"][memo_id]
-                    progressed = True
-                    continue
-
                 try:
-                    if parent_id:
+                    if source_parent_id:
                         created = api.create_memo_comment(
-                            parent_id,
-                            memo_id,
+                            target_memo_id(state, source_parent_id),
+                            None,
                             build_create_memo_payload(memo),
                         )
                     else:
-                        created = api.create_memo(memo_id, build_create_memo_payload(memo))
+                        created = api.create_memo(None, build_create_memo_payload(memo))
                 except Exception as exc:
-                    record_failure(state, state_file, "create_memo", memo_id, str(exc))
+                    record_failure(state, state_file, "create_memo", source_memo_id, str(exc))
                     progressed = True
                     continue
 
-                state["created_memos"][memo_id] = created.get("name", f"memos/{memo_id}")
+                state["created_memos"][source_memo_id] = created.get("name", "")
                 touch_state(state, state_file)
-                existence_cache[memo_id] = state["created_memos"][memo_id]
                 progressed = True
 
             if not next_pending:
@@ -320,38 +332,40 @@ def main():
                 unresolved = ", ".join(sorted(item["memo_id"] for item, _memo in next_pending))
                 raise SystemExit(
                     "Some parented memos could not be created because their parent memo "
-                    f"does not exist in the target instance: {unresolved}"
+                    f"was not created from the import bundle: {unresolved}"
                 )
             pending = next_pending
 
         for item, memo in memo_payloads:
-            memo_id = item["memo_id"]
-            if memo_id not in state["created_memos"]:
+            source_memo_id = item["memo_id"]
+            target_id = target_memo_id(state, source_memo_id)
+            if not target_id:
                 continue
-            if memo_id in state["patched_memos"]:
+            if source_memo_id in state["patched_memos"]:
                 continue
             if not memo_needs_post_create_patch(memo):
-                state["patched_memos"][memo_id] = True
+                state["patched_memos"][source_memo_id] = True
                 touch_state(state, state_file)
                 continue
             try:
                 api.update_memo(
-                    memo_id,
-                    build_update_memo_payload(memo_id, memo),
+                    target_id,
+                    build_update_memo_payload(target_id, memo),
                     update_mask=["state", "pinned"],
                 )
             except Exception as exc:
-                record_failure(state, state_file, "update_memo", memo_id, str(exc))
+                record_failure(state, state_file, "update_memo", source_memo_id, str(exc))
                 continue
-            state["patched_memos"][memo_id] = True
+            state["patched_memos"][source_memo_id] = True
             touch_state(state, state_file)
 
         for item, memo in memo_payloads:
-            memo_id = item["memo_id"]
-            if not target_memo_name(state, memo_id):
+            source_memo_id = item["memo_id"]
+            target_id = target_memo_id(state, source_memo_id)
+            if not target_id:
                 continue
-            uploaded = state["uploaded_attachments"].setdefault(memo_id, {})
-            existing_attachment_ids = build_existing_attachment_index(api, memo_id)
+            uploaded = state["uploaded_attachments"].setdefault(source_memo_id, {})
+            existing_attachment_ids = build_existing_attachment_index(api, target_id)
             new_existing = {
                 key: value
                 for key, value in existing_attachment_ids.items()
@@ -371,14 +385,14 @@ def main():
                 if attachment_id and attachment_id in uploaded:
                     continue
                 try:
-                    payload = build_attachment_payload(memo_id, attachment, temp_dir)
-                    created = api.create_attachment(attachment_id, payload)
+                    payload = build_attachment_payload(target_id, attachment, temp_dir)
+                    created = api.create_attachment(None, payload)
                 except Exception as exc:
                     record_failure(
                         state,
                         state_file,
                         "create_attachment",
-                        memo_id,
+                        source_memo_id,
                         f"{attachment.get('filename')}: {exc}",
                     )
                     continue
@@ -387,22 +401,23 @@ def main():
                 touch_state(state, state_file)
 
         for item, memo in memo_payloads:
-            memo_id = item["memo_id"]
-            if not target_memo_name(state, memo_id):
+            source_memo_id = item["memo_id"]
+            target_id = target_memo_id(state, source_memo_id)
+            if not target_id:
                 continue
-            if memo_id in state["applied_relations"]:
+            if source_memo_id in state["applied_relations"]:
                 continue
-            relations = normalize_relations(memo.get("relations", []))
+            relations = rewrite_relations(memo.get("relations", []), state)
             if not relations:
-                state["applied_relations"][memo_id] = True
+                state["applied_relations"][source_memo_id] = True
                 touch_state(state, state_file)
                 continue
             try:
-                api.set_memo_relations(memo_id, relations)
+                api.set_memo_relations(target_id, relations)
             except Exception as exc:
-                record_failure(state, state_file, "set_relations", memo_id, str(exc))
+                record_failure(state, state_file, "set_relations", source_memo_id, str(exc))
                 continue
-            state["applied_relations"][memo_id] = True
+            state["applied_relations"][source_memo_id] = True
             touch_state(state, state_file)
 
     report = {

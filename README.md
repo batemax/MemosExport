@@ -11,7 +11,7 @@ The project is intended for practical content migration:
 - export memos into a structured `zip` bundle
 - optionally include attachment files
 - import that bundle into another Memos instance
-- preserve memo IDs so relations remain valid
+- rebuild memo links by remapping source IDs to newly created target IDs
 
 ### Features
 
@@ -20,8 +20,8 @@ The project is intended for practical content migration:
 - Export a bundle manifest for validation and replay
 - Optional attachment file export
 - Import in four stages: memos, comments, attachments, relations
+- Always rewrite memo IDs during import to avoid cross-user ID conflicts
 - Resume interrupted imports with a state file bound to one bundle and one target instance
-- Conflict strategies: `fail` and `skip`
 - Standard-library only, no third-party Python dependencies
 
 ### Files
@@ -61,7 +61,7 @@ Import a bundle:
 python3 import_memos.py \
   --base-url "https://target-memos.example.com" \
   --token "YOUR_TOKEN" \
-  --bundle "./dist/memos-export-2026-04-07T12-00-00Z.zip"
+  --bundle "./memos-export-2026-04-07T12-00-00Z.zip"
 ```
 
 ### Environment Variables
@@ -78,6 +78,19 @@ export MEMOS_BASE_URL="https://memos.example.com"
 export MEMOS_TOKEN="YOUR_TOKEN"
 python3 export_memos.py --attachment-mode embedded_files
 ```
+
+By default the exporter writes the zip file into the current working directory.
+
+To choose the output filename directly:
+
+```bash
+python3 export_memos.py \
+  --base-url "https://memos.example.com" \
+  --token "YOUR_TOKEN" \
+  --bundle-name "my-export.zip"
+```
+
+You can also pass a full or relative path in `--bundle-name`.
 
 ### Attachment Export Notes
 
@@ -133,6 +146,7 @@ Version 1 supports:
 - relations
 
 Version 1 imports comment memos represented by the exported `parent` field.
+Version 1 rewrites source memo IDs during import and rebuilds comment / relation links from an internal mapping.
 
 Version 1 does not restore:
 
@@ -142,10 +156,12 @@ Version 1 does not restore:
 - instance settings
 - full multi-user migration
 
-### Conflict Strategy Notes
+### Import ID Policy
 
-- `fail`: stop when a memo with the same `memo_id` already exists in the target instance
-- `skip`: keep the existing memo body, then continue reconciling attachment IDs and exported relations for that memo
+- imports always create new memo IDs in the target instance
+- source-to-target ID mappings are stored in the import state file
+- comments are attached by rewriting `parent` through that mapping
+- relations are rebuilt by rewriting both sides of each relation through that mapping
 
 ### Compatibility Notes
 
@@ -157,6 +173,7 @@ Tested against a real private Memos deployment on `2026-04-07`:
 - because of that deployment behavior, `externalLink` attachments should currently be treated as non-lossless on that instance
 - comment trees imported correctly through `parent` + comment APIs
 - the current exporter only exported top-level memos on that instance; comment memos were not included in the export bundle
+- source memo IDs are not reused during import, which avoids `403 permission denied` conflicts caused by inaccessible IDs owned by other users
 
 ### Known Limitations
 
@@ -189,6 +206,7 @@ memos-export-2026-04-07T12-00-00Z.zip
 Each memo JSON typically contains:
 
 - `memo_id`
+- target-side memo IDs are generated during import
 - `state`
 - `createTime`, `updateTime`, `displayTime`
 - `content`
@@ -206,9 +224,10 @@ The importer runs in these stages:
 1. validate credentials and extract the bundle
 2. create top-level memos
 3. create comment memos when `parent` is present
-4. patch `state` and `pinned` for newly created memos when needed
-5. upload attachments
-6. apply relations
+4. rewrite source IDs to target IDs for comments and relations
+5. patch `state` and `pinned` for newly created memos when needed
+6. upload attachments
+7. apply relations
 
 ### Publishing Notes
 
@@ -228,7 +247,7 @@ Before pushing this repository to GitHub, you should:
 - 将 memo 导出为结构化 `zip` 包
 - 可选地把附件文件一并导出
 - 将导出包导入到另一个 Memos 实例
-- 保留原始 memo ID，确保 relations 仍然有效
+- 在导入时重写 memo ID，并重建 comments / relations 的引用关系
 
 ### 功能特性
 
@@ -237,8 +256,8 @@ Before pushing this repository to GitHub, you should:
 - 生成可校验、可回放的 bundle manifest
 - 可选导出附件文件
 - 导入分四阶段执行：memos、comments、attachments、relations
+- 导入时始终重写 memo ID，避免跨用户导入时的 ID 冲突
 - 支持断点续传，且 state file 绑定到单一 bundle 和单一目标实例
-- 支持两种冲突策略：`fail` 和 `skip`
 - 仅使用 Python 标准库，无第三方依赖
 
 ### 文件说明
@@ -278,7 +297,7 @@ python3 export_memos.py \
 python3 import_memos.py \
   --base-url "https://target-memos.example.com" \
   --token "YOUR_TOKEN" \
-  --bundle "./dist/memos-export-2026-04-07T12-00-00Z.zip"
+  --bundle "./memos-export-2026-04-07T12-00-00Z.zip"
 ```
 
 ### 环境变量
@@ -295,6 +314,19 @@ export MEMOS_BASE_URL="https://memos.example.com"
 export MEMOS_TOKEN="YOUR_TOKEN"
 python3 export_memos.py --attachment-mode embedded_files
 ```
+
+默认情况下，导出器会把 zip 文件写到当前工作目录。
+
+如果要直接指定导出文件名：
+
+```bash
+python3 export_memos.py \
+  --base-url "https://memos.example.com" \
+  --token "YOUR_TOKEN" \
+  --bundle-name "my-export.zip"
+```
+
+`--bundle-name` 也可以直接传完整路径或相对路径。
 
 ### 附件导出说明
 
@@ -350,6 +382,7 @@ memos-export-2026-04-07T12-00-00Z.zip
 - relations
 
 第一版支持导入由 `parent` 字段表示的 comment memo。
+第一版会在导入时重写源 memo ID，并通过映射重建 comment / relation 关系。
 
 第一版暂不恢复：
 
@@ -359,10 +392,12 @@ memos-export-2026-04-07T12-00-00Z.zip
 - 实例级设置
 - 完整多用户迁移
 
-### 冲突策略说明
+### 导入 ID 策略
 
-- `fail`：目标实例中只要已存在相同 `memo_id`，立即停止
-- `skip`：保留目标中已存在的 memo 本体，但继续补齐该 memo 的附件 ID 对齐和 relations 回填
+- 导入时始终在目标实例中创建新的 memo ID
+- 源 ID 到目标 ID 的映射会写入 import state file
+- comment 的 `parent` 会通过这张映射表重写
+- relations 的两端也会通过这张映射表重建
 
 ### 兼容性说明
 
@@ -374,6 +409,7 @@ memos-export-2026-04-07T12-00-00Z.zip
 - 因此在该实例上，`externalLink` 附件当前应视为“非无损能力”
 - comment 树可以通过 `parent` 和 comment API 正确导入
 - 当前 exporter 在该实例上只能导出顶级 memo，comment memo 不会进入导出包
+- 导入时不再复用源 memo ID，因此可以避开由其他用户私有对象造成的 `403 permission denied`
 
 ### 已知限制
 
@@ -406,6 +442,7 @@ memos-export-2026-04-07T12-00-00Z.zip
 每条 memo JSON 一般包含：
 
 - `memo_id`
+- 目标侧 memo ID 会在导入时重新生成
 - `state`
 - `createTime`、`updateTime`、`displayTime`
 - `content`
@@ -423,6 +460,7 @@ memos-export-2026-04-07T12-00-00Z.zip
 1. 校验凭证并解压 bundle
 2. 创建顶级 memo
 3. 对存在 `parent` 的条目创建 comment memo
-4. 必要时补丁修正新建 memo 的 `state` 和 `pinned`
-5. 上传附件
-6. 回填 relations
+4. 将源 ID 重写为目标 ID，用于 comments 和 relations
+5. 必要时补丁修正新建 memo 的 `state` 和 `pinned`
+6. 上传附件
+7. 回填 relations

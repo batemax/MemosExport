@@ -19,7 +19,6 @@ def parse_args():
     )
     parser.add_argument("--base-url", default=os.environ.get("MEMOS_BASE_URL"))
     parser.add_argument("--token", default=os.environ.get("MEMOS_TOKEN"))
-    parser.add_argument("--output-dir", default="dist")
     parser.add_argument("--page-size", type=int, default=200)
     parser.add_argument("--order-by", default="display_time desc")
     parser.add_argument("--filter", default="")
@@ -36,7 +35,7 @@ def parse_args():
     parser.add_argument(
         "--bundle-name",
         default="",
-        help="Optional output zip filename. Defaults to memos-export-<timestamp>.zip",
+        help="Optional output zip filename or path. Defaults to ./memos-export-<timestamp>.zip",
     )
     parser.add_argument(
         "--timeout",
@@ -122,6 +121,20 @@ def write_bundle(staging_dir, bundle_path):
                 archive.write(path, path.relative_to(staging_dir))
 
 
+def resolve_bundle_path(bundle_name_arg):
+    default_name = f"memos-export-{export_timestamp()}.zip"
+    if bundle_name_arg:
+        candidate = Path(bundle_name_arg)
+        if candidate.is_absolute() or candidate.parent != Path("."):
+            bundle_path = candidate.resolve()
+        else:
+            bundle_path = (Path.cwd() / candidate.name).resolve()
+    else:
+        bundle_path = (Path.cwd() / default_name).resolve()
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+    return bundle_path
+
+
 def main():
     args = parse_args()
     require(args.base_url, "base_url")
@@ -138,11 +151,7 @@ def main():
     else:
         states = ["ARCHIVED"]
 
-    output_dir = Path(args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    bundle_filename = args.bundle_name or f"memos-export-{export_timestamp()}.zip"
-    bundle_path = output_dir / bundle_filename
+    bundle_path = resolve_bundle_path(args.bundle_name)
 
     with tempfile.TemporaryDirectory(prefix="memos-export-") as temp_dir:
         staging_dir = Path(temp_dir)

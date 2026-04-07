@@ -175,10 +175,13 @@ class MemosAPI:
         return self.request_bytes("GET", url)
 
     def create_memo(self, memo_id, payload):
+        query = {}
+        if memo_id:
+            query["memoId"] = memo_id
         return self.request(
             "POST",
             "/memos",
-            query={"memoId": memo_id},
+            query=query,
             body=payload,
         )
 
