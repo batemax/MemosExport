@@ -26,12 +26,9 @@ The project is intended for practical content migration:
 
 ### Files
 
-- [`export_memos.py`](/Users/booth/Personal/Workspace/memosExport/export_memos.py): create export bundles
-- [`import_memos.py`](/Users/booth/Personal/Workspace/memosExport/import_memos.py): restore bundles into a target instance
-- [`memos_api.py`](/Users/booth/Personal/Workspace/memosExport/memos_api.py): shared API client
-- [`docs/memos-export-import-plan.md`](/Users/booth/Personal/Workspace/memosExport/docs/memos-export-import-plan.md): high-level design
-- [`docs/export-bundle-spec.md`](/Users/booth/Personal/Workspace/memosExport/docs/export-bundle-spec.md): bundle format
-- [`docs/import-workflow.md`](/Users/booth/Personal/Workspace/memosExport/docs/import-workflow.md): importer execution model
+- [`export_memos.py`](./export_memos.py): create export bundles
+- [`import_memos.py`](./import_memos.py): restore bundles into a target instance
+- [`memos_api.py`](./memos_api.py): shared API client
 
 ### Requirements
 
@@ -107,7 +104,7 @@ memos-export-2026-04-07T12-00-00Z.zip
       image.png
 ```
 
-See [`docs/export-bundle-spec.md`](/Users/booth/Personal/Workspace/memosExport/docs/export-bundle-spec.md) for the exact schema.
+The bundle contains `manifest.json`, one JSON payload per memo, and optional exported attachment files.
 
 ### Import Output
 
@@ -152,7 +149,7 @@ Version 1 does not restore:
 
 ### Compatibility Notes
 
-Tested against `https://memos.moex.top` on `2026-04-07`:
+Tested against a real private Memos deployment on `2026-04-07`:
 
 - `CreateMemo` accepted `state` and `pinned` in the request schema, but the instance did not persist them reliably on create
 - the importer now compensates by calling `UpdateMemo` after creation for newly created memos
@@ -166,11 +163,58 @@ Tested against `https://memos.moex.top` on `2026-04-07`:
 - comment trees are currently importable, but not fully exportable on instances where `ListMemos` does not return comment memos
 - `externalLink` attachments are not lossless on deployments that persist them as empty strings during `CreateAttachment`
 
+### Bundle Layout
+
+Typical archive layout:
+
+```text
+memos-export-2026-04-07T12-00-00Z.zip
+  manifest.json
+  memos/
+    memos_abc123.json
+  attachments/
+    abc123/
+      image.png
+```
+
+`manifest.json` records:
+
+- format version
+- source instance
+- source user
+- attachment mode
+- exported items
+- warnings
+
+Each memo JSON typically contains:
+
+- `memo_id`
+- `state`
+- `createTime`, `updateTime`, `displayTime`
+- `content`
+- `visibility`
+- `pinned`
+- `location`
+- `parent`
+- `attachments`
+- `relations`
+
+### Import Workflow
+
+The importer runs in these stages:
+
+1. validate credentials and extract the bundle
+2. create top-level memos
+3. create comment memos when `parent` is present
+4. patch `state` and `pinned` for newly created memos when needed
+5. upload attachments
+6. apply relations
+
 ### Publishing Notes
 
 Before pushing this repository to GitHub, you should:
 
-1. remove local test bundles from `dist-test/`
+1. remove local test bundles from your local test-output directory
 2. remove local import state files you do not want to publish
 3. replace any real URLs or tokens used in local testing
 4. add a license file if you want public reuse
@@ -199,12 +243,9 @@ Before pushing this repository to GitHub, you should:
 
 ### 文件说明
 
-- [`export_memos.py`](/Users/booth/Personal/Workspace/memosExport/export_memos.py)：导出 bundle
-- [`import_memos.py`](/Users/booth/Personal/Workspace/memosExport/import_memos.py)：将 bundle 恢复到目标实例
-- [`memos_api.py`](/Users/booth/Personal/Workspace/memosExport/memos_api.py)：共享 API 客户端
-- [`docs/memos-export-import-plan.md`](/Users/booth/Personal/Workspace/memosExport/docs/memos-export-import-plan.md)：总体设计
-- [`docs/export-bundle-spec.md`](/Users/booth/Personal/Workspace/memosExport/docs/export-bundle-spec.md)：导出包格式
-- [`docs/import-workflow.md`](/Users/booth/Personal/Workspace/memosExport/docs/import-workflow.md)：导入执行流程
+- [`export_memos.py`](./export_memos.py)：导出 bundle
+- [`import_memos.py`](./import_memos.py)：将 bundle 恢复到目标实例
+- [`memos_api.py`](./memos_api.py)：共享 API 客户端
 
 ### 环境要求
 
@@ -280,7 +321,7 @@ memos-export-2026-04-07T12-00-00Z.zip
       image.png
 ```
 
-完整字段请查看 [`docs/export-bundle-spec.md`](/Users/booth/Personal/Workspace/memosExport/docs/export-bundle-spec.md)。
+导出包中包含 `manifest.json`、逐 memo 的 JSON 文件，以及可选的附件导出文件。
 
 ### 导入产物
 
@@ -325,7 +366,7 @@ memos-export-2026-04-07T12-00-00Z.zip
 
 ### 兼容性说明
 
-基于 `2026-04-07` 对 `https://memos.moex.top` 的实测：
+基于 `2026-04-07` 对一个真实私有 Memos 部署的实测：
 
 - `CreateMemo` 的请求结构虽然声明支持 `state` 和 `pinned`，但该实例在创建时并不会稳定持久化这两个字段
 - 导入器现在会在创建后追加一次 `UpdateMemo`，用于修正新建 memo 的这两个字段
@@ -338,3 +379,50 @@ memos-export-2026-04-07T12-00-00Z.zip
 
 - comment 树当前可以导入，但在 `ListMemos` 不返回 comment memo 的实例上，无法完整导出
 - 对于会把 `CreateAttachment.externalLink` 持久化为空字符串的部署，externalLink 附件当前不是无损能力
+
+### 导出包结构
+
+典型压缩包结构如下：
+
+```text
+memos-export-2026-04-07T12-00-00Z.zip
+  manifest.json
+  memos/
+    memos_abc123.json
+  attachments/
+    abc123/
+      image.png
+```
+
+`manifest.json` 主要记录：
+
+- 格式版本
+- 来源实例
+- 来源用户
+- 附件模式
+- 导出条目
+- 警告
+
+每条 memo JSON 一般包含：
+
+- `memo_id`
+- `state`
+- `createTime`、`updateTime`、`displayTime`
+- `content`
+- `visibility`
+- `pinned`
+- `location`
+- `parent`
+- `attachments`
+- `relations`
+
+### 导入流程
+
+导入器按以下阶段执行：
+
+1. 校验凭证并解压 bundle
+2. 创建顶级 memo
+3. 对存在 `parent` 的条目创建 comment memo
+4. 必要时补丁修正新建 memo 的 `state` 和 `pinned`
+5. 上传附件
+6. 回填 relations
