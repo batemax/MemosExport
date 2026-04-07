@@ -4,7 +4,7 @@
 
 ## English
 
-Portable export and import scripts for [Memos](https://www.usememos.com/), built on top of the public `v1` API.
+Portable export and import scripts for [Memos](https://www.usememos.com/), built on top of the public `v1` API. Build with AI.
 
 The project is intended for practical content migration:
 
@@ -221,7 +221,7 @@ Before pushing this repository to GitHub, you should:
 
 ## 简体中文
 
-基于 Memos 公开 `v1` API 的导出与导入脚本，适合做实际可用的内容迁移。
+基于 [Memos](https://www.usememos.com/) 公开 `v1` API 的导出与导入脚本，适合做实际可用的内容迁移。使用AI辅助构建。
 
 这个项目的目标是：
 
