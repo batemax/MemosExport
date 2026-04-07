@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 dist/
+docsNew/
 dist-test/
 *.import-state.json
 *.import-state.json.report.json
